@@ -1,0 +1,185 @@
+import com.sun.net.httpserver.HttpServer;  
+import com.sun.net.httpserver.HttpExchange;  
+import com.sun.net.httpserver.HttpHandler;  
+
+import java.io.IOException;  
+import java.io.OutputStream;  
+import java.net.InetSocketAddress;  
+import java.nio.charset.StandardCharsets;  
+import java.util.ArrayList;  
+import java.util.List;  
+import java.util.Optional;  
+import java.util.stream.Collectors;  
+
+public class SimpleProductServer {  
+
+    static class Product {  
+        private String name;  
+        private double price;  
+
+        public Product(String name, double price) {  
+            this.name = name;  
+            this.price = price;  
+        }  
+
+        public String getName() {  
+            return name;  
+        }  
+
+        public double getPrice() {  
+            return price;  
+        }  
+
+        public void setPrice(double price) {  
+            this.price = price;  
+        }  
+
+        @Override  
+        public String toString() {  
+            return "Product{name='" + name + "', price=" + price + '}';  
+        }  
+    }  
+
+    static class ProductService {  
+        private final List<Product> products = new ArrayList<>();  
+
+        public List<Product> getAllProducts() {  
+            return new ArrayList<>(products);  
+        }  
+
+        public void addProduct(Product product) {  
+            products.add(product);  
+        }  
+
+        public boolean deleteProduct(String name) {  
+            return products.removeIf(product -> product.getName().equalsIgnoreCase(name));  
+        }  
+
+        public boolean updateProduct(String name, double price) {  
+            Optional<Product> productOpt = products.stream()  
+                    .filter(product -> product.getName().equalsIgnoreCase(name))  
+                    .findFirst();  
+
+            if (productOpt.isPresent()) {  
+                productOpt.get().setPrice(price);  
+                return true;  
+            }  
+            return false;  
+        }  
+    }  
+
+    static class ProductController implements HttpHandler {  
+        private final ProductService productService;  
+
+        public ProductController(ProductService productService) {  
+            this.productService = productService;  
+        }  
+
+        @Override  
+        public void handle(HttpExchange exchange) throws IOException {  
+            String method = exchange.getRequestMethod();  
+            if ("GET".equalsIgnoreCase(method)) {  
+                getAllProducts(exchange);  
+            } else if ("POST".equalsIgnoreCase(method)) {  
+                addProduct(exchange);  
+            } else if ("DELETE".equalsIgnoreCase(method)) {  
+                deleteProduct(exchange);  
+            } else if ("PUT".equalsIgnoreCase(method)) {  
+                updateProduct(exchange);  
+            } else {  
+                exchange.sendResponseHeaders(405, -1); // Метод не дозволений  
+            }  
+        }  
+
+        private void getAllProducts(HttpExchange exchange) throws IOException {  
+            List<Product> products = productService.getAllProducts();  
+            String response = "Products:\n" + products.stream()  
+                    .map(Product::toString)  
+                    .collect(Collectors.joining("\n"));  
+            exchange.getResponseHeaders().set("Content-Type", "text/plain");  
+            exchange.sendResponseHeaders(200, response.getBytes().length);  
+            try (OutputStream os = exchange.getResponseBody()) {  
+                os.write(response.getBytes());  
+            }  
+        }  
+
+        private void addProduct(HttpExchange exchange) throws IOException {  
+            String query = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);  
+            String[] params = query.split("&");  
+            String name = null;  
+            double price = 0;  
+            for (String param : params) {  
+                String[] pair = param.split("=");  
+                if ("name".equalsIgnoreCase(pair[0])) {  
+                    name = pair[1];  
+                } else if ("price".equalsIgnoreCase(pair[0])) {  
+                    price = Double.parseDouble(pair[1]);  
+                }  
+            }  
+            if (name != null) {  
+                productService.addProduct(new Product(name, price));  
+                exchange.sendResponseHeaders(201, -1); // Створено  
+            } else {  
+                exchange.sendResponseHeaders(400, -1); // Поганий запит  
+            }  
+        }  
+
+        private void deleteProduct(HttpExchange exchange) throws IOException {  
+            String query = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);  
+            String[] params = query.split("&");  
+            String name = null;  
+            for (String param : params) {  
+                String[] pair = param.split("=");  
+                if ("name".equalsIgnoreCase(pair[0])) {  
+                    name = pair[1];  
+                }  
+            }  
+            if (name != null) {  
+                boolean removed = productService.deleteProduct(name);  
+                if (removed) {  
+                    exchange.sendResponseHeaders(200, -1); // Успішно  
+                } else {  
+                    exchange.sendResponseHeaders(404, -1); // Не знайдено  
+                }  
+            } else {  
+                exchange.sendResponseHeaders(400, -1); // Поганий запит  
+            }  
+        }  
+
+        private void updateProduct(HttpExchange exchange) throws IOException {  
+            String query = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);  
+            String[] params = query.split("&");  
+            String name = null;  
+            double price = 0;  
+            for (String param : params) {  
+                String[] pair = param.split("=");  
+                if ("name".equalsIgnoreCase(pair[0])) {  
+                    name = pair[1];  
+                } else if ("price".equalsIgnoreCase(pair[0])) {  
+                    price = Double.parseDouble(pair[1]);  
+                }  
+            }  
+            if (name != null) {  
+                boolean updated = productService.updateProduct(name, price);  
+                if (updated) {  
+                    exchange.sendResponseHeaders(200, -1); // Успішно  
+                } else {  
+                    exchange.sendResponseHeaders(404, -1); // Не знайдено  
+                }  
+            } else {  
+                exchange.sendResponseHeaders(400, -1); // Поганий запит  
+            }  
+        }  
+    }  
+
+    public static void main(String[] args) throws IOException {  
+        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);  
+        ProductService productService = new ProductService();  
+        ProductController productController = new ProductController(productService);  
+
+        server.createContext("/products", productController);  
+        server.setExecutor(null);  
+        server.start();  
+        System.out.println("Server started on port 8080");  
+    }  
+}
